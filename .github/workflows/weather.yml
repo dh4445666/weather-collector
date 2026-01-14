@@ -1,4 +1,4 @@
-name: Weather Tracker
+name: Weather Collector
 
 on:
   schedule:
@@ -8,26 +8,32 @@ on:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Install dependencies
         run: pip install requests
 
-      - name: Run collector
-        run: python weather_collector.py
-
-      - name: Commit data
+      - name: Run weather collector
+        working-directory: ${{ github.workspace }}
         run: |
+          pwd
+          ls -la
+          python weather_collector.py
+
+      - name: Commit and push results
+        working-directory: ${{ github.workspace }}
+        run: |
+          git status
           git config user.name "weather-bot"
           git config user.email "weather-bot@users.noreply.github.com"
           git add -A
-          git commit -m "Update weather data" || echo "No changes"
+          git commit -m "Update weather data" || echo "No changes to commit"
           git push
