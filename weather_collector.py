@@ -1,6 +1,7 @@
 import requests
 import json
 import csv
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -18,8 +19,16 @@ HEADERS = {
     "x-requested-with": "XMLHttpRequest",
 }
 
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
+# =======================
+# PATH HANDLING (CRITICAL FIX)
+# =======================
+
+# In GitHub Actions → GITHUB_WORKSPACE is repo root
+# Locally → fallback to current working directory
+REPO_ROOT = Path(os.environ.get("GITHUB_WORKSPACE", Path.cwd()))
+
+DATA_DIR = REPO_ROOT / "Report"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 RAW_LOG_FILE = DATA_DIR / "raw_api_log.jsonl"
 HISTORY_FILE = DATA_DIR / "temperature_history.csv"
@@ -116,10 +125,10 @@ def append_temperature_history(payload):
 # =======================
 
 def recompute_daily_summary():
-    aggregates = {}
-
     if not HISTORY_FILE.exists():
         return
+
+    aggregates = {}
 
     with HISTORY_FILE.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -157,17 +166,20 @@ def recompute_daily_summary():
 # =======================
 
 def main():
+    print(f"Repo root  : {REPO_ROOT}")
+    print(f"Report dir: {DATA_DIR}")
+
     payload = fetch_weather_data()
 
     if payload is None:
         print("Skipping this run due to API failure")
-        return  # DO NOT fail the workflow
+        return  # Do NOT fail the workflow
 
     append_raw_log(payload)
     append_temperature_history(payload)
     recompute_daily_summary()
 
-    print(f"Run successful @ {datetime.now().isoformat()}")
+    print(f"Run successful @ {datetime.now(timezone.utc).isoformat()}")
     print(f"Records fetched: {len(payload)}")
 
 
