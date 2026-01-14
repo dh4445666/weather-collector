@@ -3,6 +3,8 @@ import json
 import csv
 from datetime import datetime, timezone
 from pathlib import Path
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # =======================
 # CONFIG
@@ -24,21 +26,42 @@ HISTORY_FILE = DATA_DIR / "temperature_history.csv"
 DAILY_SUMMARY_FILE = DATA_DIR / "daily_summary.csv"
 
 # =======================
-# FETCH & PARSE
+# FETCH WITH RETRIES
 # =======================
 
 def fetch_weather_data():
-    response = requests.post(URL, headers=HEADERS, timeout=30)
-    response.raise_for_status()
+    session = requests.Session()
 
-    # API returns JSON string inside JSON → decode twice
-    outer = json.loads(response.text)
-    payload = json.loads(outer)
+    retries = Retry(
+        total=5,
+        backoff_factor=3,
+        status_forcelist=[500, 502, 503, 504],
+        allowed_methods=["POST"]
+    )
 
-    if not isinstance(payload, list):
-        raise ValueError("Parsed payload is not a list")
+    adapter = HTTPAdapter(max_retries=retries)
+    session.mount("https://", adapter)
 
-    return payload
+    try:
+        response = session.post(
+            URL,
+            headers=HEADERS,
+            timeout=(5, 20)  # connect timeout, read timeout
+        )
+        response.raise_for_status()
+
+        # KSNDMC returns JSON string inside JSON
+        outer = json.loads(response.text)
+        payload = json.loads(outer)
+
+        if not isinstance(payload, list):
+            raise ValueError("Parsed payload is not a list")
+
+        return payload
+
+    except Exception as e:
+        print("⚠️ KSNDMC API unreachable or slow:", str(e))
+        return None
 
 
 # =======================
@@ -56,7 +79,7 @@ def append_raw_log(payload):
 
 
 # =======================
-# HISTORICAL CSV STORAGE
+# HISTORICAL STORAGE
 # =======================
 
 def append_temperature_history(payload):
@@ -89,11 +112,14 @@ def append_temperature_history(payload):
 
 
 # =======================
-# DAILY MIN / MAX REPORT
+# DAILY MIN / MAX
 # =======================
 
 def recompute_daily_summary():
     aggregates = {}
+
+    if not HISTORY_FILE.exists():
+        return
 
     with HISTORY_FILE.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -103,10 +129,7 @@ def recompute_daily_summary():
             temp = float(row["temperature"])
 
             if key not in aggregates:
-                aggregates[key] = {
-                    "max": temp,
-                    "min": temp
-                }
+                aggregates[key] = {"max": temp, "min": temp}
             else:
                 aggregates[key]["max"] = max(aggregates[key]["max"], temp)
                 aggregates[key]["min"] = min(aggregates[key]["min"], temp)
@@ -130,11 +153,15 @@ def recompute_daily_summary():
 
 
 # =======================
-# MAIN
+# MAIN (FAIL-SAFE)
 # =======================
 
 def main():
     payload = fetch_weather_data()
+
+    if payload is None:
+        print("Skipping this run due to API failure")
+        return  # DO NOT fail the workflow
 
     append_raw_log(payload)
     append_temperature_history(payload)
